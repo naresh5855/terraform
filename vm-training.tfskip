@@ -1,0 +1,143 @@
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~>3.0"
+    }
+  }
+}
+provider "azurerm" {
+  features {}
+}
+locals {
+  resource_grp_name = "ram_group"
+  name              = ["subnetA", "subnetB"]
+  address_space     = ["10.0.1.0/24", "10.0.2.0/24"]
+}
+resource "azurerm_resource_group" "ram_group" {
+  name     = local.resource_grp_name
+  location = "East US"
+}
+resource "azurerm_virtual_network" "ram_test" {
+  name                = "ram-test"
+  location            = azurerm_resource_group.ram_group.location
+  resource_group_name = azurerm_resource_group.ram_group.name
+  address_space       = ["10.0.0.0/16"]
+
+  tags = {
+    environment = "staging"
+  }
+}
+resource "azurerm_subnet" "subnetA" {
+  name                 = local.name[0]
+  resource_group_name  = azurerm_resource_group.ram_group.name
+  virtual_network_name = azurerm_virtual_network.ram_test.name
+  address_prefixes     = [local.address_space[0]]
+}
+resource "azurerm_subnet" "subnetB" {
+  name                 = local.name[1]
+  resource_group_name  = azurerm_resource_group.ram_group.name
+  virtual_network_name = azurerm_virtual_network.ram_test.name
+  address_prefixes     = [local.address_space[1]]
+}
+resource "azurerm_network_interface" "ram-ni" {
+  name                = "eram-ni"
+  location            = azurerm_resource_group.ram_group.location
+  resource_group_name = azurerm_resource_group.ram_group.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.subnetA.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id            = azurerm_public_ip.ram-pip.id
+  }
+}
+output "subnetA-id" {
+  value = azurerm_subnet.subnetA.id
+}
+resource "azurerm_public_ip" "ram-pip" {
+  name                = "RamPublicIp1"
+  resource_group_name = azurerm_resource_group.ram_group.name
+  location            = azurerm_resource_group.ram_group.location
+  allocation_method   = "Static"
+
+  tags = {
+    environment = "Production"
+  }
+}
+resource "azurerm_network_security_group" "ram-nsg" {
+  name                = "Ram-SGroup1"
+  location            = azurerm_resource_group.ram_group.location
+  resource_group_name = azurerm_resource_group.ram_group.name
+
+  security_rule {
+    name                       = "test123"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "*"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  tags = {
+    environment = "staging"
+  }
+}
+resource "azurerm_subnet_network_security_group_association" "ram-nsga" {
+  subnet_id                 = azurerm_subnet.subnetA.id
+  network_security_group_id = azurerm_network_security_group.ram-nsg.id
+}
+/*
+resource "azurerm_windows_virtual_machine" "ram-win" {
+  name                = "ram-win"
+  resource_group_name = azurerm_resource_group.ram_group.name
+  location            = azurerm_resource_group.ram_group.location
+  size                = "Standard_F2"
+  admin_username      = "adminuser"
+  admin_password      = "P@$$w0rd1234!"
+  network_interface_ids = [
+    azurerm_network_interface.ram-ni.id,
+  ]
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "MicrosoftWindowsServer"
+    offer     = "WindowsServer"
+    sku       = "2016-Datacenter"
+    version   = "latest"
+  }
+}
+*/
+resource "azurerm_linux_virtual_machine" "my-vm" {
+  name                = "my-vm"
+  resource_group_name = azurerm_resource_group.ram_group.name
+  location            = azurerm_resource_group.ram_group.location
+  size                = "Standard_F2"
+  admin_username      = "adminuser"
+  network_interface_ids = [
+    azurerm_network_interface.ram-ni.id,
+  ]
+
+  admin_ssh_key {
+    username   = "adminuser"
+    public_key = file("~/.ssh/id_rsa.pub")
+  }
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts"
+    version   = "latest"
+  }
+}
